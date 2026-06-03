@@ -7,8 +7,9 @@ import subprocess
 import platform
 from datetime import datetime
 from PIL import Image, ImageTk
+import shutil
 
-APP_NAME = "KBMC Order Folder Creator"
+APP_NAME = "KBMC Order Folder Creator with Auto-Video"
 PRIMARY = "#C41E3A"  # Professional deep red
 ACCENT = "#E74C3C"   # Bright red accent
 BG = "#F5F5F5"       # Light gray background (modern)
@@ -19,14 +20,18 @@ LIGHT_BORDER = "#E0E0E0"  # Light border
 HOVER = "#A01830"    # Darker red for hover
 ACCENT_HOVER = "#D63425"  # Darker accent for hover
 
+# Video extensions to search for
+VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mkv', '.mov', '.webm', '.flv']
+
 class KBMCApp:
     def __init__(self, root):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("1200x900")
+        self.root.geometry("1200x1100")
         self.root.configure(bg=BG)
 
         self.destination = tk.StringVar()
+        self.video_source = tk.StringVar()
         self.date_var = tk.StringVar()
         self.buttons = []  # Store button references for hover effects
         
@@ -98,7 +103,7 @@ class KBMCApp:
 
         title_label = tk.Label(
             header_content,
-            text="Order Folder Creator Enterprise",
+            text="Order Folder Creator with Auto-Video Copy",
             bg=PRIMARY,
             fg="#FFD4D4",
             font=("Segoe UI", 14)
@@ -106,21 +111,46 @@ class KBMCApp:
         title_label.pack(side="left", padx=20)
 
         # ===== MAIN CONTENT =====
-        main = tk.Frame(self.root, bg=BG)
-        main.pack(fill="both", expand=True, padx=30, pady=20)
+        scroll_container = tk.Frame(self.root, bg=BG)
+        scroll_container.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # ===== SECTION: INPUT FIELDS =====
-        input_frame = tk.Frame(main, bg=CARD, relief="flat", bd=0)
-        input_frame.pack(fill="x", pady=(0, 15))
-        
-        # Add subtle border effect
-        input_frame.config(highlightthickness=1, highlightbackground=LIGHT_BORDER, highlightcolor=LIGHT_BORDER)
+        canvas = tk.Canvas(scroll_container, bg=BG, highlightthickness=0)
+        v_scrollbar = ttk.Scrollbar(scroll_container, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=v_scrollbar.set)
+
+        v_scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        main = tk.Frame(canvas, bg=BG)
+        canvas.create_window((0, 0), window=main, anchor="nw")
+
+        def on_frame_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        main.bind("<Configure>", on_frame_configure)
+
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def enable_canvas_scroll(event):
+            canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+        def disable_canvas_scroll(event):
+            canvas.unbind_all("<MouseWheel>")
+
+        canvas.bind("<Enter>", enable_canvas_scroll)
+        canvas.bind("<Leave>", disable_canvas_scroll)
+
+        # ===== SECTION: FOLDER PATHS =====
+        paths_frame = tk.Frame(main, bg=CARD, relief="flat", bd=0)
+        paths_frame.pack(fill="x", pady=(0, 15), padx=20)
+        paths_frame.config(highlightthickness=1, highlightbackground=LIGHT_BORDER, highlightcolor=LIGHT_BORDER)
 
         # Destination Field
-        dest_label = tk.Label(input_frame, text="Destination Folder", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
+        dest_label = tk.Label(paths_frame, text="Destination Folder", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
         dest_label.pack(anchor="w", padx=20, pady=(15, 5))
 
-        dest_entry_frame = tk.Frame(input_frame, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
+        dest_entry_frame = tk.Frame(paths_frame, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
         dest_entry_frame.pack(fill="x", padx=20, pady=(0, 15))
 
         dest_entry = tk.Entry(dest_entry_frame, textvariable=self.destination, font=("Segoe UI", 11), bg="#FFFFFF", fg=TEXT, relief="flat", bd=0, highlightthickness=0)
@@ -128,13 +158,27 @@ class KBMCApp:
         dest_entry.insert(0, "📁 Click 'Browse' or paste folder path here...")
         self.setup_placeholder(dest_entry, "📁 Click 'Browse' or paste folder path here...")
 
-        self.create_button(dest_entry_frame, "Browse", self.browse, ACCENT, width=10, height=1, is_primary=False).pack(side="right", padx=(10, 0))
+        self.create_button(dest_entry_frame, "Browse", self.browse_destination, ACCENT, width=10, height=1, is_primary=False).pack(side="right", padx=(10, 0))
+
+        # Video Source Field
+        video_label = tk.Label(paths_frame, text="Video Source Folder", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
+        video_label.pack(anchor="w", padx=20, pady=(0, 5))
+
+        video_entry_frame = tk.Frame(paths_frame, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
+        video_entry_frame.pack(fill="x", padx=20, pady=(0, 15))
+
+        video_entry = tk.Entry(video_entry_frame, textvariable=self.video_source, font=("Segoe UI", 11), bg="#FFFFFF", fg=TEXT, relief="flat", bd=0, highlightthickness=0)
+        video_entry.pack(side="left", fill="x", expand=True, padx=10, pady=8)
+        video_entry.insert(0, "📹 Select folder where video files are stored...")
+        self.setup_placeholder(video_entry, "📹 Select folder where video files are stored...")
+
+        self.create_button(video_entry_frame, "Browse", self.browse_video_source, ACCENT, width=10, height=1, is_primary=False).pack(side="right", padx=(10, 0))
 
         # Date Field
-        date_label = tk.Label(input_frame, text="Date (MM-DD-YY)", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
+        date_label = tk.Label(paths_frame, text="Date (MM-DD-YY)", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
         date_label.pack(anchor="w", padx=20, pady=(0, 5))
 
-        date_entry_frame = tk.Frame(input_frame, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
+        date_entry_frame = tk.Frame(paths_frame, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
         date_entry_frame.pack(fill="x", padx=20, pady=(0, 15))
 
         date_entry = tk.Entry(date_entry_frame, textvariable=self.date_var, font=("Segoe UI", 11), bg="#FFFFFF", fg=TEXT, relief="flat", bd=0, highlightthickness=0, width=25)
@@ -147,17 +191,29 @@ class KBMCApp:
         format_hint = tk.Label(date_entry_frame, text="e.g., 06-03-26", bg=CARD, fg=SECONDARY_TEXT, font=("Segoe UI", 8))
         format_hint.pack(side="left", padx=10)
 
-        # Order Numbers Field
-        orders_label = tk.Label(input_frame, text="Order Numbers (one per line)", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
-        orders_label.pack(anchor="w", padx=20, pady=(0, 5))
+        # ===== SECTION: ORDER & VIDEO ID INPUTS =====
+        inputs_frame = tk.Frame(main, bg=CARD, relief="flat", bd=0)
+        inputs_frame.pack(fill="both", expand=True, pady=(0, 15), padx=20)
+        inputs_frame.config(highlightthickness=1, highlightbackground=LIGHT_BORDER, highlightcolor=LIGHT_BORDER)
+        inputs_frame.columnconfigure(0, weight=1, minsize=360)
+        inputs_frame.columnconfigure(1, weight=1, minsize=360)
+        inputs_frame.rowconfigure(0, weight=1)
+        inputs_frame.rowconfigure(1, weight=0)
 
-        orders_frame = tk.Frame(input_frame, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
-        orders_frame.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+        # Top row: Order Numbers and Video IDs
+        left_col = tk.Frame(inputs_frame, bg=CARD)
+        left_col.grid(row=0, column=0, sticky="nsew", padx=(20, 10), pady=20)
+
+        orders_label = tk.Label(left_col, text="Order Numbers (one per line)", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
+        orders_label.pack(anchor="w", pady=(0, 5))
+
+        orders_frame = tk.Frame(left_col, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
+        orders_frame.pack(fill="both", expand=True)
 
         self.order_box = ScrolledText(
             orders_frame,
             font=("Segoe UI", 11),
-            height=8,
+            height=18,
             bg="#FFFFFF",
             fg=TEXT,
             relief="flat",
@@ -169,24 +225,114 @@ class KBMCApp:
             wrap="word"
         )
         self.order_box.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        # Add placeholder text
-        self.order_box.insert("1.0", "📋 Type order numbers here (one per line)\nExample:\n123456\n789012\n345678")
+        self.order_box.insert("1.0", "📋 Type order numbers here (one per line)\nExample:\n2502348234234\n2502348234235\n2502348234236")
         self.order_box.config(fg="#AAAAAA")
-        
-        # Clear placeholder on first focus
+
         def on_order_focus(event):
             if self.order_box.get("1.0", tk.END).startswith("📋"):
                 self.order_box.delete("1.0", tk.END)
                 self.order_box.config(fg=TEXT)
-        
+
         self.order_box.bind("<FocusIn>", on_order_focus)
+
+        middle_col = tk.Frame(inputs_frame, bg=CARD)
+        middle_col.grid(row=0, column=1, sticky="nsew", padx=(10, 20), pady=20)
+
+        video_ids_label = tk.Label(middle_col, text="Video IDs (one per line)", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
+        video_ids_label.pack(anchor="w", pady=(0, 5))
+
+        video_ids_frame = tk.Frame(middle_col, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
+        video_ids_frame.pack(fill="both", expand=True)
+
+        self.video_ids_box = ScrolledText(
+            video_ids_frame,
+            font=("Segoe UI", 11),
+            height=18,
+            bg="#FFFFFF",
+            fg=TEXT,
+            relief="flat",
+            bd=0,
+            insertbackground=PRIMARY,
+            selectbackground=PRIMARY,
+            selectforeground="white",
+            highlightthickness=0,
+            wrap="word"
+        )
+        self.video_ids_box.pack(fill="both", expand=True, padx=10, pady=10)
+        self.video_ids_box.insert("1.0", "🎬 Type corresponding video IDs (one per line)\nExample:\n2036\n2037\n2038")
+        self.video_ids_box.config(fg="#AAAAAA")
+
+        def on_video_focus(event):
+            if self.video_ids_box.get("1.0", tk.END).startswith("🎬"):
+                self.video_ids_box.delete("1.0", tk.END)
+                self.video_ids_box.config(fg=TEXT)
+
+        self.video_ids_box.bind("<FocusIn>", on_video_focus)
+
+        # Bottom row: Notes and Missing Orders
+        notes_row = tk.Frame(inputs_frame, bg=CARD)
+        notes_row.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=20, pady=(0, 20))
+        notes_row.columnconfigure(0, weight=1, minsize=360)
+        notes_row.columnconfigure(1, weight=1, minsize=360)
+
+        notes_col = tk.Frame(notes_row, bg=CARD)
+        notes_col.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+
+        notes_label = tk.Label(notes_col, text="Automation Notes", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
+        notes_label.pack(anchor="w", pady=(0, 5))
+
+        notes_frame = tk.Frame(notes_col, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
+        notes_frame.pack(fill="both", expand=True)
+
+        self.notes_box = ScrolledText(
+            notes_frame,
+            font=("Segoe UI", 11),
+            height=8,
+            bg="#FFFFFF",
+            fg=TEXT,
+            relief="flat",
+            bd=0,
+            insertbackground=PRIMARY,
+            selectbackground=PRIMARY,
+            selectforeground="white",
+            highlightthickness=0,
+            wrap="word",
+            state="disabled"
+        )
+        self.notes_box.pack(fill="both", expand=True, padx=10, pady=10)
+        self.write_note("Note: Orders will still be created if no matching Video ID exists. Missing or unmatched entries are reported here.")
+
+        missing_col = tk.Frame(notes_row, bg=CARD)
+        missing_col.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+
+        missing_label = tk.Label(missing_col, text="Orders Missing Video", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
+        missing_label.pack(anchor="w", pady=(0, 5))
+
+        missing_frame = tk.Frame(missing_col, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
+        missing_frame.pack(fill="both", expand=True)
+
+        self.missing_orders_box = ScrolledText(
+            missing_frame,
+            font=("Segoe UI", 11),
+            height=8,
+            bg="#FFFFFF",
+            fg=TEXT,
+            relief="flat",
+            bd=0,
+            insertbackground=PRIMARY,
+            selectbackground=PRIMARY,
+            selectforeground="white",
+            highlightthickness=0,
+            wrap="word",
+            state="disabled"
+        )
+        self.missing_orders_box.pack(fill="both", expand=True, padx=10, pady=10)
 
         # ===== SECTION: ACTION BUTTONS =====
         actions_frame = tk.Frame(main, bg=BG)
         actions_frame.pack(fill="x", pady=(0, 15))
 
-        btn1 = self.create_button(actions_frame, "✓ CREATE FOLDERS", self.create_folders, PRIMARY, width=25, height=1, is_primary=True)
+        btn1 = self.create_button(actions_frame, "✓ CREATE & COPY", self.create_folders_with_video, PRIMARY, width=25, height=1, is_primary=True)
         btn1.pack(side="left", padx=(0, 10))
 
         btn2 = self.create_button(actions_frame, "📂 OPEN LOCATION", self.open_location, ACCENT, width=25, height=1, is_primary=False)
@@ -273,18 +419,52 @@ class KBMCApp:
         except ValueError:
             return False
 
-    def browse(self):
+    def browse_destination(self):
         folder = filedialog.askdirectory()
         if folder:
             self.destination.set(folder)
             self.write_log(f"📁 Destination selected: {folder}")
 
+    def browse_video_source(self):
+        folder = filedialog.askdirectory()
+        if folder:
+            self.video_source.set(folder)
+            self.write_log(f"📹 Video source selected: {folder}")
+
     def write_log(self, text):
         self.log.insert("end", text + "\n")
         self.log.see("end")
 
-    def create_folders(self):
+    def write_note(self, text):
+        self.notes_box.config(state="normal")
+        self.notes_box.insert("end", text + "\n")
+        self.notes_box.see("end")
+        self.notes_box.config(state="disabled")
+
+    def write_missing_order(self, order, reason=None):
+        self.missing_orders_box.config(state="normal")
+        if reason:
+            self.missing_orders_box.insert("end", f"{order} — {reason}\n")
+        else:
+            self.missing_orders_box.insert("end", f"{order}\n")
+        self.missing_orders_box.see("end")
+        self.missing_orders_box.config(state="disabled")
+
+    def find_video_file(self, video_id, video_source_folder):
+        """Search for video file with given ID in video source folder"""
+        if not os.path.exists(video_source_folder):
+            return None
+        
+        for ext in VIDEO_EXTENSIONS:
+            video_file = os.path.join(video_source_folder, f"{video_id}{ext}")
+            if os.path.exists(video_file):
+                return video_file
+        
+        return None
+
+    def create_folders_with_video(self):
         destination = self.destination.get().strip()
+        video_source = self.video_source.get().strip()
         date_input = self.date_var.get().strip()
 
         # ===== VALIDATION =====
@@ -294,6 +474,14 @@ class KBMCApp:
 
         if not os.path.exists(destination):
             messagebox.showerror("Error", "Destination folder does not exist.")
+            return
+
+        if not video_source:
+            messagebox.showerror("Error", "Select a video source folder.")
+            return
+
+        if not os.path.exists(video_source):
+            messagebox.showerror("Error", "Video source folder does not exist.")
             return
 
         if not date_input:
@@ -308,25 +496,59 @@ class KBMCApp:
         orders = [
             x.strip()
             for x in self.order_box.get("1.0", "end").splitlines()
-            if x.strip()
+            if x.strip() and not x.strip().startswith("📋")
         ]
 
-        orders = list(dict.fromkeys(orders))
+        # Get video IDs
+        video_ids = [
+            x.strip()
+            for x in self.video_ids_box.get("1.0", "end").splitlines()
+            if x.strip() and not x.strip().startswith("🎬")
+        ]
 
         if not orders:
             messagebox.showerror("Error", "Enter at least one order number.")
             return
 
+        has_no_video_ids = not bool(video_ids)
+        extra_video_ids = []
+        if len(video_ids) > len(orders):
+            extra_video_ids = video_ids[len(orders):]
+            video_ids = video_ids[:len(orders)]
+
+        self.notes_box.config(state="normal")
+        self.notes_box.delete("1.0", "end")
+        self.notes_box.config(state="disabled")
+        self.missing_orders_box.config(state="normal")
+        self.missing_orders_box.delete("1.0", "end")
+        self.missing_orders_box.config(state="disabled")
+
         self.progress["maximum"] = len(orders)
         self.progress["value"] = 0
 
-        self.log.delete("1.0", "end")
-        self.write_log(f"Starting folder creation...\n")
+        self.write_log(f"Starting folder creation with auto-video copy...\n")
         self.write_log(f"📅 Date: {date_input}")
-        self.write_log(f"📍 Location: {destination}")
+        self.write_log(f"📍 Destination: {destination}")
+        self.write_log(f"📹 Video source: {video_source}")
         self.write_log(f"📊 Orders: {len(orders)}\n")
 
+        if has_no_video_ids:
+            self.write_log("⚠️  No video IDs provided. Orders will still be created without video attachments.")
+            self.write_note("No video IDs were provided; all orders will be created without video attachments.")
+
+        if extra_video_ids:
+            self.write_log(
+                f"⚠️  Ignored {len(extra_video_ids)} extra Video ID(s) without matching orders: {', '.join(extra_video_ids)}"
+            )
+            self.write_note(
+                f"Ignored extra Video ID(s): {', '.join(extra_video_ids)}"
+            )
+
+        video_ids_extended = video_ids + [None] * (len(orders) - len(video_ids))
+
         errors = []
+        videos_found = 0
+        videos_missing = 0
 
         try:
             # ===== CREATE DATE FOLDER =====
@@ -335,7 +557,7 @@ class KBMCApp:
             self.write_log(f"✓ Created date folder: {date_input}\n")
 
             # ===== CREATE ORDER FOLDERS INSIDE DATE FOLDER =====
-            for i, order in enumerate(orders, start=1):
+            for i, (order, video_id) in enumerate(zip(orders, video_ids_extended), start=1):
                 try:
                     # Order folder path: destination/DATE/ORDER_NUMBER/
                     order_folder = os.path.join(date_folder, order)
@@ -344,17 +566,41 @@ class KBMCApp:
                     before_shipping = os.path.join(order_folder, "BEFORE SHIPPING")
                     os.makedirs(before_shipping, exist_ok=True)
 
+                    self.write_log(f"  ├─ {order}/")
+                    self.write_log(f"  │  ├─ BEFORE SHIPPING/")
+
+                    if video_id:
+                        video_file = self.find_video_file(video_id, video_source)
+                        if video_file:
+                            try:
+                                video_filename = os.path.basename(video_file)
+                                destination_path = os.path.join(before_shipping, video_filename)
+                                shutil.copy2(video_file, destination_path)
+                                self.write_log(f"  │  │  ✓ Copied: {video_filename}")
+                                videos_found += 1
+                            except Exception as e:
+                                self.write_log(f"  │  │  ✗ Failed to copy video: {str(e)}")
+                                self.write_note(f"Order {order}: failed to copy video ID {video_id}.")
+                                self.write_missing_order(order, f"failed to copy video ID {video_id}")
+                                videos_missing += 1
+                        else:
+                            self.write_log(f"  │  │  ⚠️  Video ID '{video_id}' not found in source folder")
+                            self.write_note(f"Order {order}: video ID '{video_id}' not found.")
+                            self.write_missing_order(order, f"video ID '{video_id}' missing in source")
+                            videos_missing += 1
+                    else:
+                        self.write_log(f"  │  │  ⚠️  No Video ID provided for order {order}. Order created without video.")
+                        self.write_note(f"Order {order}: created without a matching Video ID.")
+                        self.write_missing_order(order, "no Video ID provided")
+
                     # UPON RETURNS subfolder
                     upon_returns = os.path.join(order_folder, "UPON RETURNS")
                     os.makedirs(upon_returns, exist_ok=True)
+                    self.write_log(f"  │  └─ UPON RETURNS/")
 
                     self.progress["value"] = i
                     self.status.config(text=f"🔄 Processing {i}/{len(orders)}...", fg="#F57C00")
                     self.root.update_idletasks()
-
-                    self.write_log(f"  ├─ {order}/")
-                    self.write_log(f"  │  ├─ BEFORE SHIPPING/")
-                    self.write_log(f"  │  └─ UPON RETURNS/")
 
                 except Exception as e:
                     error_msg = f"✗ Failed to create {order}: {str(e)}"
@@ -369,17 +615,27 @@ class KBMCApp:
                 messagebox.showwarning(
                     "Partial Success",
                     f"Created {len(orders) - len(errors)}/{len(orders)} folders.\n\n"
+                    f"Videos found: {videos_found}\n"
+                    f"Videos missing: {videos_missing}\n\n"
                     f"Check the Activity Log for details."
                 )
             else:
                 self.write_log(f"✓ All {len(orders)} orders processed successfully!")
-                messagebox.showinfo(
-                    "Success",
+                self.write_log(f"✓ Videos copied: {videos_found}")
+                if videos_missing > 0:
+                    self.write_log(f"⚠️  Videos missing: {videos_missing}")
+                if extra_video_ids:
+                    self.write_log(f"⚠️  Extra video IDs ignored: {len(extra_video_ids)}")
+
+                summary_message = (
                     f"Created {len(orders)} order folders in:\n\n"
                     f"{date_input}/\n\n"
-                    f"Location: {destination}"
+                    f"Videos copied: {videos_found}\n"
                 )
-
+                if extra_video_ids:
+                    summary_message += f"Extra video IDs ignored: {len(extra_video_ids)}\n"
+                summary_message += f"Location: {destination}"
+                messagebox.showinfo("Success", summary_message)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to create folders: {str(e)}")
             self.write_log(f"✗ Fatal error: {str(e)}")
