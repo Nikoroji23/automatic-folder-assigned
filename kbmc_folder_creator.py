@@ -549,6 +549,7 @@ class KBMCApp:
         errors = []
         videos_found = 0
         videos_missing = 0
+        missing_orders_numbers = []
 
         try:
             # ===== CREATE DATE FOLDER =====
@@ -582,16 +583,19 @@ class KBMCApp:
                                 self.write_log(f"  │  │  ✗ Failed to copy video: {str(e)}")
                                 self.write_note(f"Order {order}: failed to copy video ID {video_id}.")
                                 self.write_missing_order(order, f"failed to copy video ID {video_id}")
+                                missing_orders_numbers.append(order)
                                 videos_missing += 1
                         else:
                             self.write_log(f"  │  │  ⚠️  Video ID '{video_id}' not found in source folder")
                             self.write_note(f"Order {order}: video ID '{video_id}' not found.")
                             self.write_missing_order(order, f"video ID '{video_id}' missing in source")
+                            missing_orders_numbers.append(order)
                             videos_missing += 1
                     else:
                         self.write_log(f"  │  │  ⚠️  No Video ID provided for order {order}. Order created without video.")
                         self.write_note(f"Order {order}: created without a matching Video ID.")
                         self.write_missing_order(order, "no Video ID provided")
+                        missing_orders_numbers.append(order)
 
                     # UPON RETURNS subfolder
                     upon_returns = os.path.join(order_folder, "UPON RETURNS")
@@ -608,6 +612,21 @@ class KBMCApp:
                     errors.append(error_msg)
 
             self.status.config(text="✅ Completed Successfully", fg="#2E7D32")
+            # Summarize orders that did not receive copied videos (only order numbers)
+            if missing_orders_numbers:
+                # Preserve first-seen order and remove duplicates
+                seen = []
+                for o in missing_orders_numbers:
+                    if o not in seen:
+                        seen.append(o)
+                self.write_note("Orders without copied videos: " + ", ".join(seen))
+                # Replace missing orders box contents with concise order numbers
+                self.missing_orders_box.config(state="normal")
+                self.missing_orders_box.delete("1.0", "end")
+                for o in seen:
+                    self.missing_orders_box.insert("end", f"{o}\n")
+                self.missing_orders_box.config(state="disabled")
+
             self.write_log(f"\n{'='*50}")
             
             if errors:
@@ -655,6 +674,8 @@ class KBMCApp:
             
         # Open the date folder
         full_path = os.path.join(path, date_input)
+        # Normalize and expand user vars to avoid path issues
+        full_path = os.path.normpath(os.path.expanduser(full_path))
         
         if not os.path.exists(full_path):
             messagebox.showerror("Error", f"Folder does not exist: {full_path}")
@@ -663,13 +684,17 @@ class KBMCApp:
         try:
             # Windows
             if platform.system() == "Windows":
-                os.startfile(full_path)
+                try:
+                    os.startfile(full_path)
+                except Exception:
+                    # Fallback to explorer if startfile fails
+                    subprocess.run(["explorer", full_path], check=False)
             # macOS
             elif platform.system() == "Darwin":
-                subprocess.run(["open", full_path], check=True)
+                subprocess.run(["open", full_path], check=False)
             # Linux
             else:
-                subprocess.run(["xdg-open", full_path], check=True)
+                subprocess.run(["xdg-open", full_path], check=False)
                 
             self.write_log(f"📂 Opened: {full_path}")
             
