@@ -16,8 +16,8 @@ PRIMARY = "#C41E3A"  # Professional deep red
 ACCENT = "#E74C3C"   # Bright red accent
 BG = "#F5F5F5"       # Light gray background (modern)
 CARD = "#FFFFFF"     # White cards
-TEXT = "#333333"     # Dark text for light background
-SECONDARY_TEXT = "#666666"  # Gray text
+TEXT = "#000000"     # Black text for light background
+SECONDARY_TEXT = "#333333"  # Dark gray text
 LIGHT_BORDER = "#E0E0E0"  # Light border
 HOVER = "#A01830"    # Darker red for hover
 ACCENT_HOVER = "#D63425"  # Darker accent for hover
@@ -149,7 +149,8 @@ class KBMCApp:
     def __init__(self, root):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("1200x1100")
+        self.root.geometry("900x750")
+        self.root.minsize(800, 600)
         self.root.configure(bg=BG)
 
         self.destination = tk.StringVar()
@@ -157,6 +158,8 @@ class KBMCApp:
         self.images_source = tk.StringVar()
         self.date_var = tk.StringVar()
         self.buttons = []  # Store button references for hover effects
+        self.animation_id = None
+        self.animating_buttons = {}
         
         # Load logo
         self.logo_image = None
@@ -164,429 +167,408 @@ class KBMCApp:
         if os.path.exists(logo_path):
             try:
                 img = Image.open(logo_path)
-                img = img.resize((70, 60), Image.Resampling.LANCZOS)
+                img = img.resize((50, 45), Image.Resampling.LANCZOS)
                 self.logo_image = ImageTk.PhotoImage(img)
             except Exception as e:
                 print(f"Could not load logo: {e}")
 
         self.build_ui()
 
-    def create_button(self, parent, text, command, bg_color, width=None, height=None, is_primary=True):
-        """Create a modern styled button with subtle hover effects"""
+    def create_button(self, parent, text, command, bg_color, width=12, height=1):
+        """Create modern styled button"""
         btn = tk.Button(
             parent,
             text=text,
             command=command,
             bg=bg_color,
-            fg="white" if is_primary else "white",
-            font=("Segoe UI", 10, "bold"),
-            height=height or 1,
-            width=width or 15,
+            fg="white",
+            font=("Segoe UI", 9, "bold"),
+            height=height,
+            width=width,
             relief="flat",
             bd=0,
-            activebackground=HOVER if is_primary else ACCENT_HOVER,
+            activebackground=HOVER,
             activeforeground="white",
             cursor="hand2",
-            padx=12,
-            pady=8
+            padx=8,
+            pady=5
         )
-        
-        # Store for later reference
-        self.buttons.append((btn, bg_color, HOVER if is_primary else ACCENT_HOVER))
-        
-        # Bind hover effects
-        btn.bind("<Enter>", lambda e, b=btn, hover_color=HOVER if is_primary else ACCENT_HOVER: b.config(bg=hover_color))
-        btn.bind("<Leave>", lambda e, b=btn, normal_color=bg_color: b.config(bg=normal_color))
-        
+        btn.bind("<Enter>", lambda e, b=btn, color=bg_color: self.animate_button_hover(b, color, HOVER))
+        btn.bind("<Leave>", lambda e, b=btn, color=bg_color: self.animate_button_leave(b, HOVER, color))
         return btn
 
-    def build_ui(self):
-        self.root.configure(bg=BG)
+    def interpolate_color(self, color1, color2, factor):
+        """Interpolate between two hex colors"""
+        c1 = int(color1[1:], 16)
+        c2 = int(color2[1:], 16)
+        r1, g1, b1 = (c1 >> 16) & 255, (c1 >> 8) & 255, c1 & 255
+        r2, g2, b2 = (c2 >> 16) & 255, (c2 >> 8) & 255, c2 & 255
+        r = int(r1 + (r2 - r1) * factor)
+        g = int(g1 + (g2 - g1) * factor)
+        b = int(b1 + (b2 - b1) * factor)
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    def animate_button_hover(self, btn, start_color, end_color, steps=8):
+        """Smooth button hover animation"""
+        if btn in self.animating_buttons:
+            self.root.after_cancel(self.animating_buttons[btn])
         
+        def step(current_step):
+            if current_step <= steps:
+                factor = current_step / steps
+                color = self.interpolate_color(start_color, end_color, factor)
+                btn.config(bg=color)
+                self.animating_buttons[btn] = self.root.after(20, step, current_step + 1)
+            else:
+                btn.config(bg=end_color)
+                if btn in self.animating_buttons:
+                    del self.animating_buttons[btn]
+        
+        step(0)
+
+    def animate_button_leave(self, btn, current_color, target_color, steps=8):
+        """Smooth button leave animation"""
+        if btn in self.animating_buttons:
+            self.root.after_cancel(self.animating_buttons[btn])
+        
+        def step(current_step):
+            if current_step <= steps:
+                factor = current_step / steps
+                color = self.interpolate_color(current_color, target_color, factor)
+                btn.config(bg=color)
+                self.animating_buttons[btn] = self.root.after(20, step, current_step + 1)
+            else:
+                btn.config(bg=target_color)
+                if btn in self.animating_buttons:
+                    del self.animating_buttons[btn]
+        
+        step(0)
+
+    def animate_frame_appearance(self, frame, duration_ms=300):
+        """Animate frame appearance (fade-in like effect)"""
+        original_bg = frame.cget("bg")
+        steps = int(duration_ms / 20)
+        
+        def step(current_step):
+            if current_step <= steps:
+                alpha = current_step / steps
+                # Apply a subtle highlighting effect
+                frame.config(relief="solid", bd=0)
+                self.root.after(20, step, current_step + 1)
+            else:
+                frame.config(relief="flat", bd=0)
+        
+        step(0)
+
+    def animate_progress_smooth(self, target_value, duration_ms=500):
+        """Smoothly animate progress bar to target value"""
+        current = self.progress["value"]
+        target = min(target_value, self.progress["maximum"])
+        steps = int(duration_ms / 20)
+        
+        def step(current_step):
+            if current_step <= steps:
+                progress = current + (target - current) * (current_step / steps)
+                self.progress["value"] = progress
+                self.root.update_idletasks()
+                self.root.after(20, step, current_step + 1)
+            else:
+                self.progress["value"] = target
+        
+        step(0)
+
+    def animate_status_text(self, text, color, duration_ms=300):
+        """Animate status text change with color transition"""
+        def update_status():
+            self.status.config(text=text, fg=color)
+            self.status.update_idletasks()
+        
+        self.root.after(int(duration_ms / 2), update_status)
+
+    def create_collapsible_section(self, parent, title, content_builder, initial_open=True):
+        """Create a collapsible section with animation"""
+        section_frame = tk.Frame(parent, bg=CARD, relief="flat", bd=0)
+        section_frame.pack(fill="x", pady=(0, 8))
+        section_frame.config(highlightthickness=1, highlightbackground=LIGHT_BORDER)
+        
+        # Header
+        header_frame = tk.Frame(section_frame, bg=CARD, relief="flat", bd=0)
+        header_frame.pack(fill="x", padx=10, pady=8)
+        
+        is_open = [initial_open]
+        content_frame = tk.Frame(section_frame, bg=CARD)
+        
+        title_label = tk.Label(
+            header_frame, 
+            text=f"{'▼' if initial_open else '▶'} {title}",
+            bg=CARD, 
+            fg=PRIMARY, 
+            font=("Segoe UI", 10, "bold"),
+            cursor="hand2"
+        )
+        title_label.pack(side="left")
+        
+        def toggle_section():
+            is_open[0] = not is_open[0]
+            if is_open[0]:
+                title_label.config(text=f"▼ {title}")
+                content_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+                content_builder(content_frame)
+                self.animate_frame_appearance(content_frame, 200)
+            else:
+                title_label.config(text=f"▶ {title}")
+                content_frame.pack_forget()
+        
+        title_label.bind("<Button-1>", lambda e: toggle_section())
+        header_frame.bind("<Button-1>", lambda e: toggle_section())
+        
+        if initial_open:
+            content_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+            content_builder(content_frame)
+        
+        return section_frame
+
+    def build_ui(self):
         # ===== HEADER =====
-        header = tk.Frame(self.root, bg=PRIMARY, height=90)
+        header = tk.Frame(self.root, bg=PRIMARY, height=60)
         header.pack(fill="x")
+        header.pack_propagate(False)
         
         header_content = tk.Frame(header, bg=PRIMARY)
-        header_content.pack(fill="both", expand=True, padx=30, pady=15)
+        header_content.pack(fill="both", expand=True, padx=15, pady=10)
 
-        # Logo
         if self.logo_image:
             logo_label = tk.Label(header_content, image=self.logo_image, bg=PRIMARY)
-            logo_label.pack(side="left", padx=(0, 15))
-        else:
-            logo_label = tk.Label(
-                header_content,
-                text="🏢 KBMC",
-                bg=PRIMARY,
-                fg="white",
-                font=("Segoe UI", 24, "bold")
-            )
-            logo_label.pack(side="left")
+            logo_label.pack(side="left", padx=(0, 10))
 
         title_label = tk.Label(
             header_content,
-            text="Order Folder Creator with Auto-Video Copy",
+            text="Order Folder Creator with Auto-Video",
             bg=PRIMARY,
-            fg="#FFD4D4",
-            font=("Segoe UI", 14)
+            fg="white",
+            font=("Segoe UI", 11, "bold")
         )
-        title_label.pack(side="left", padx=20)
+        title_label.pack(side="left")
 
         # ===== MAIN CONTENT =====
-        scroll_container = tk.Frame(self.root, bg=BG)
-        scroll_container.pack(fill="both", expand=True, padx=10, pady=10)
+        main_frame = tk.Frame(self.root, bg=BG)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        canvas = tk.Canvas(scroll_container, bg=BG, highlightthickness=0)
-        v_scrollbar = ttk.Scrollbar(scroll_container, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=v_scrollbar.set)
+        # ===== PATHS SECTION =====
+        paths_frame = tk.Frame(main_frame, bg=CARD, relief="flat", bd=0)
+        paths_frame.pack(fill="x", pady=(0, 8))
+        paths_frame.config(highlightthickness=1, highlightbackground=LIGHT_BORDER)
 
-        v_scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
+        # Destination
+        tk.Label(paths_frame, text="Destination Folder", bg=CARD, fg=PRIMARY, font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(8, 2))
+        dest_frame = tk.Frame(paths_frame, bg="#F0F0F0", relief="solid", bd=1)
+        dest_frame.pack(fill="x", padx=10, pady=(0, 8))
+        
+        dest_entry = tk.Entry(dest_frame, textvariable=self.destination, font=("Segoe UI", 10), bg="#FFFFFF", fg=TEXT, relief="flat", bd=0)
+        dest_entry.pack(side="left", fill="x", expand=True, padx=8, pady=5)
+        self.create_button(dest_frame, "Browse", self.browse_destination, ACCENT, width=8).pack(side="right", padx=(5, 0))
 
-        main = tk.Frame(canvas, bg=BG)
-        canvas.create_window((0, 0), window=main, anchor="nw")
+        # Video Source
+        tk.Label(paths_frame, text="Video Source Folder", bg=CARD, fg=PRIMARY, font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
+        video_frame = tk.Frame(paths_frame, bg="#F0F0F0", relief="solid", bd=1)
+        video_frame.pack(fill="x", padx=10, pady=(0, 8))
+        
+        video_entry = tk.Entry(video_frame, textvariable=self.video_source, font=("Segoe UI", 10), bg="#FFFFFF", fg=TEXT, relief="flat", bd=0)
+        video_entry.pack(side="left", fill="x", expand=True, padx=8, pady=5)
+        self.create_button(video_frame, "Browse", self.browse_video_source, ACCENT, width=8).pack(side="right", padx=(5, 0))
 
-        def on_frame_configure(event):
-            canvas.configure(scrollregion=canvas.bbox("all"))
+        # Images Source
+        tk.Label(paths_frame, text="Images Folder", bg=CARD, fg=PRIMARY, font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
+        images_frame = tk.Frame(paths_frame, bg="#F0F0F0", relief="solid", bd=1)
+        images_frame.pack(fill="x", padx=10, pady=(0, 8))
+        
+        images_entry = tk.Entry(images_frame, textvariable=self.images_source, font=("Segoe UI", 10), bg="#FFFFFF", fg=TEXT, relief="flat", bd=0)
+        images_entry.pack(side="left", fill="x", expand=True, padx=8, pady=5)
+        self.create_button(images_frame, "Browse", self.browse_images_source, ACCENT, width=8).pack(side="right", padx=(5, 0))
 
-        main.bind("<Configure>", on_frame_configure)
+        # Date
+        tk.Label(paths_frame, text="Date (MM-DD-YY)", bg=CARD, fg=PRIMARY, font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
+        date_frame = tk.Frame(paths_frame, bg="#F0F0F0", relief="solid", bd=1)
+        date_frame.pack(fill="x", padx=10, pady=(0, 10))
+        
+        date_entry = tk.Entry(date_frame, textvariable=self.date_var, font=("Segoe UI", 10), bg="#FFFFFF", fg=TEXT, relief="flat", bd=0, width=15)
+        date_entry.pack(side="left", padx=(8, 5), pady=5)
+        self.create_button(date_frame, "Today", self.set_today, PRIMARY, width=8).pack(side="left", padx=(0, 5))
+        tk.Label(date_frame, text="e.g., 06-03-26", bg="#F0F0F0", fg=SECONDARY_TEXT, font=("Segoe UI", 8)).pack(side="left")
 
-        def on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        # ===== DATA SECTION =====
+        data_frame = tk.Frame(main_frame, bg=CARD, relief="flat", bd=0)
+        data_frame.pack(fill="both", expand=True, pady=(0, 8))
+        data_frame.config(highlightthickness=1, highlightbackground=LIGHT_BORDER)
+        data_frame.columnconfigure(0, weight=1)
+        data_frame.columnconfigure(1, weight=1)
 
-        def enable_canvas_scroll(event):
-            canvas.bind_all("<MouseWheel>", on_mousewheel)
-
-        def disable_canvas_scroll(event):
-            canvas.unbind_all("<MouseWheel>")
-
-        canvas.bind("<Enter>", enable_canvas_scroll)
-        canvas.bind("<Leave>", disable_canvas_scroll)
-
-        # ===== SECTION: FOLDER PATHS =====
-        paths_frame = tk.Frame(main, bg=CARD, relief="flat", bd=0)
-        paths_frame.pack(fill="x", pady=(0, 15), padx=20)
-        paths_frame.config(highlightthickness=1, highlightbackground=LIGHT_BORDER, highlightcolor=LIGHT_BORDER)
-
-        # Destination Field
-        dest_label = tk.Label(paths_frame, text="Destination Folder", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
-        dest_label.pack(anchor="w", padx=20, pady=(15, 5))
-
-        dest_entry_frame = tk.Frame(paths_frame, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
-        dest_entry_frame.pack(fill="x", padx=20, pady=(0, 15))
-
-        dest_entry = tk.Entry(dest_entry_frame, textvariable=self.destination, font=("Segoe UI", 11), bg="#FFFFFF", fg=TEXT, relief="flat", bd=0, highlightthickness=0)
-        dest_entry.pack(side="left", fill="x", expand=True, padx=10, pady=8)
-        dest_entry.insert(0, "📁 Click 'Browse' or paste folder path here...")
-        self.setup_placeholder(dest_entry, "📁 Click 'Browse' or paste folder path here...")
-
-        self.create_button(dest_entry_frame, "Browse", self.browse_destination, ACCENT, width=10, height=1, is_primary=False).pack(side="right", padx=(10, 0))
-
-        # Video Source Field
-        video_label = tk.Label(paths_frame, text="Video Source Folder", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
-        video_label.pack(anchor="w", padx=20, pady=(0, 5))
-
-        video_entry_frame = tk.Frame(paths_frame, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
-        video_entry_frame.pack(fill="x", padx=20, pady=(0, 15))
-
-        video_entry = tk.Entry(video_entry_frame, textvariable=self.video_source, font=("Segoe UI", 11), bg="#FFFFFF", fg=TEXT, relief="flat", bd=0, highlightthickness=0)
-        video_entry.pack(side="left", fill="x", expand=True, padx=10, pady=8)
-        video_entry.insert(0, "📹 Select folder where video files are stored...")
-        self.setup_placeholder(video_entry, "📹 Select folder where video files are stored...")
-
-        self.create_button(video_entry_frame, "Browse", self.browse_video_source, ACCENT, width=10, height=1, is_primary=False).pack(side="right", padx=(10, 0))
-
-        # Images Source Field
-        images_label = tk.Label(paths_frame, text="Images Folder (manual per order)", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
-        images_label.pack(anchor="w", padx=20, pady=(0, 5))
-
-        images_entry_frame = tk.Frame(paths_frame, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
-        images_entry_frame.pack(fill="x", padx=20, pady=(0, 15))
-
-        images_entry = tk.Entry(images_entry_frame, textvariable=self.images_source, font=("Segoe UI", 11), bg="#FFFFFF", fg=TEXT, relief="flat", bd=0, highlightthickness=0)
-        images_entry.pack(side="left", fill="x", expand=True, padx=10, pady=8)
-        images_entry.insert(0, "🖼️ Select folder with manual images for orders...")
-        self.setup_placeholder(images_entry, "🖼️ Select folder with manual images for orders...")
-
-        self.create_button(images_entry_frame, "Browse", self.browse_images_source, ACCENT, width=10, height=1, is_primary=False).pack(side="right", padx=(10, 0))
-
-        images_hint = tk.Label(paths_frame, text="Set this folder and then click CREATE, COPY & ASSIGN to manually choose images for each order.", bg=CARD, fg=SECONDARY_TEXT, font=("Segoe UI", 8), justify="left")
-        images_hint.pack(fill="x", padx=20, pady=(0, 10))
-
-        # Date Field
-        date_label = tk.Label(paths_frame, text="Date (MM-DD-YY)", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
-        date_label.pack(anchor="w", padx=20, pady=(0, 5))
-
-        date_entry_frame = tk.Frame(paths_frame, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
-        date_entry_frame.pack(fill="x", padx=20, pady=(0, 15))
-
-        date_entry = tk.Entry(date_entry_frame, textvariable=self.date_var, font=("Segoe UI", 11), bg="#FFFFFF", fg=TEXT, relief="flat", bd=0, highlightthickness=0, width=25)
-        date_entry.pack(side="left", padx=(10, 10), pady=8)
-        date_entry.insert(0, "📅 Enter date (MM-DD-YY) or click 'Today'")
-        self.setup_placeholder(date_entry, "📅 Enter date (MM-DD-YY) or click 'Today'")
-
-        self.create_button(date_entry_frame, "Today", self.set_today, PRIMARY, width=10, height=1, is_primary=True).pack(side="left")
-
-        format_hint = tk.Label(date_entry_frame, text="e.g., 06-03-26", bg=CARD, fg=SECONDARY_TEXT, font=("Segoe UI", 8))
-        format_hint.pack(side="left", padx=10)
-
-        # ===== SECTION: ORDER & VIDEO ID INPUTS =====
-        inputs_frame = tk.Frame(main, bg=CARD, relief="flat", bd=0)
-        inputs_frame.pack(fill="both", expand=True, pady=(0, 15), padx=20)
-        inputs_frame.config(highlightthickness=1, highlightbackground=LIGHT_BORDER, highlightcolor=LIGHT_BORDER)
-        inputs_frame.columnconfigure(0, weight=1, minsize=360)
-        inputs_frame.columnconfigure(1, weight=1, minsize=360)
-        inputs_frame.rowconfigure(0, weight=1)
-        inputs_frame.rowconfigure(1, weight=0)
-
-        # Top row: Order Numbers and Video IDs
-        left_col = tk.Frame(inputs_frame, bg=CARD)
-        left_col.grid(row=0, column=0, sticky="nsew", padx=(20, 10), pady=20)
-
-        orders_label = tk.Label(left_col, text="Order Numbers (one per line)", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
-        orders_label.pack(anchor="w", pady=(0, 5))
-
-        orders_frame = tk.Frame(left_col, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
-        orders_frame.pack(fill="both", expand=True)
-
+        # Order Numbers
+        tk.Label(data_frame, text="Order Numbers", bg=CARD, fg=PRIMARY, font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w", padx=10, pady=(8, 2))
+        
+        orders_box_frame = tk.Frame(data_frame, bg="#F0F0F0", relief="solid", bd=1)
+        orders_box_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10), ipady=0)
+        data_frame.rowconfigure(1, weight=1)
+        
         self.order_box = ScrolledText(
-            orders_frame,
-            font=("Segoe UI", 11),
-            height=18,
+            orders_box_frame,
+            font=("Consolas", 9),
+            height=8,
             bg="#FFFFFF",
-            fg=TEXT,
+            fg="#000000",
             relief="flat",
             bd=0,
             insertbackground=PRIMARY,
-            selectbackground=PRIMARY,
-            selectforeground="white",
             highlightthickness=0,
             wrap="word"
         )
-        self.order_box.pack(fill="both", expand=True, padx=10, pady=10)
-        self.order_box.insert("1.0", "📋 Type order numbers here (one per line)\nExample:\n2502348234234\n2502348234235\n2502348234236")
-        self.order_box.config(fg="#AAAAAA")
+        self.order_box.pack(fill="both", expand=True, padx=8, pady=8)
+        self.order_box.insert("1.0", "2502348234234\n2502348234235\n2502348234236")
 
         def on_order_focus(event):
-            if self.order_box.get("1.0", tk.END).startswith("📋"):
-                self.order_box.delete("1.0", tk.END)
+            if self.order_box.get("1.0", tk.END).startswith("250234"):
+                pass
+            if self.order_box.get("1.0", "1.1") == "2":
                 self.order_box.config(fg=TEXT)
 
         self.order_box.bind("<FocusIn>", on_order_focus)
 
-        # Manual images are now assigned during CREATE, COPY & ASSIGN
-        middle_col = tk.Frame(inputs_frame, bg=CARD)
-        middle_col.grid(row=0, column=1, sticky="nsew", padx=(10, 20), pady=20)
-
-        video_ids_label = tk.Label(middle_col, text="Video IDs (one per line)", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
-        video_ids_label.pack(anchor="w", pady=(0, 5))
-
-        video_ids_frame = tk.Frame(middle_col, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
-        video_ids_frame.pack(fill="both", expand=True)
-
+        # Video IDs
+        tk.Label(data_frame, text="Video IDs", bg=CARD, fg=PRIMARY, font=("Segoe UI", 9, "bold")).grid(row=0, column=1, sticky="w", padx=10, pady=(8, 2))
+        
+        video_ids_box_frame = tk.Frame(data_frame, bg="#F0F0F0", relief="solid", bd=1)
+        video_ids_box_frame.grid(row=1, column=1, sticky="nsew", padx=10, pady=(0, 10), ipady=0)
+        
         self.video_ids_box = ScrolledText(
-            video_ids_frame,
-            font=("Segoe UI", 11),
-            height=18,
+            video_ids_box_frame,
+            font=("Consolas", 9),
+            height=8,
             bg="#FFFFFF",
-            fg=TEXT,
+            fg="#000000",
             relief="flat",
             bd=0,
             insertbackground=PRIMARY,
-            selectbackground=PRIMARY,
-            selectforeground="white",
             highlightthickness=0,
             wrap="word"
         )
-        self.video_ids_box.pack(fill="both", expand=True, padx=10, pady=10)
-        self.video_ids_box.insert("1.0", "🎬 Type corresponding video IDs (one per line)\nExample:\n2036\n2037\n2038")
-        self.video_ids_box.config(fg="#AAAAAA")
+        self.video_ids_box.pack(fill="both", expand=True, padx=8, pady=8)
+        self.video_ids_box.insert("1.0", "2036\n2037\n2038")
 
-        def on_video_focus(event):
-            if self.video_ids_box.get("1.0", tk.END).startswith("🎬"):
-                self.video_ids_box.delete("1.0", tk.END)
-                self.video_ids_box.config(fg=TEXT)
-
-        self.video_ids_box.bind("<FocusIn>", on_video_focus)
-
-        # Bottom row: Notes and Missing Orders
-        notes_row = tk.Frame(inputs_frame, bg=CARD)
-        notes_row.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=20, pady=(0, 20))
-        notes_row.columnconfigure(0, weight=1, minsize=360)
-        notes_row.columnconfigure(1, weight=1, minsize=360)
-
-        notes_col = tk.Frame(notes_row, bg=CARD)
-        notes_col.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-
-        notes_label = tk.Label(notes_col, text="Automation Notes", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
-        notes_label.pack(anchor="w", pady=(0, 5))
-
-        notes_frame = tk.Frame(notes_col, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
-        notes_frame.pack(fill="both", expand=True)
-
+        # Status & Notes (below orders/video IDs)
+        tk.Label(data_frame, text="Status & Notes", bg=CARD, fg=PRIMARY, font=("Segoe UI", 9, "bold")).grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 2))
+        
+        notes_box_frame = tk.Frame(data_frame, bg="#F0F0F0", relief="solid", bd=1)
+        notes_box_frame.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0, 10))
+        
         self.notes_box = ScrolledText(
-            notes_frame,
-            font=("Segoe UI", 11),
-            height=8,
+            notes_box_frame,
+            font=("Consolas", 8),
+            height=3,
             bg="#FFFFFF",
             fg=TEXT,
             relief="flat",
             bd=0,
             insertbackground=PRIMARY,
-            selectbackground=PRIMARY,
-            selectforeground="white",
             highlightthickness=0,
             wrap="word",
             state="disabled"
         )
-        self.notes_box.pack(fill="both", expand=True, padx=10, pady=10)
-        self.write_note("Note: Orders will still be created if no matching Video ID exists. Missing or unmatched entries are reported here.")
-
-        missing_col = tk.Frame(notes_row, bg=CARD)
-        missing_col.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
-
-        missing_label = tk.Label(missing_col, text="Orders Missing Video", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
-        missing_label.pack(anchor="w", pady=(0, 5))
-
-        missing_frame = tk.Frame(missing_col, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
-        missing_frame.pack(fill="both", expand=True)
+        self.notes_box.pack(fill="both", expand=True, padx=8, pady=8)
+        self.write_note("Ready. Configure paths and click 'CREATE & COPY'.")
 
         self.missing_orders_box = ScrolledText(
-            missing_frame,
-            font=("Segoe UI", 11),
-            height=8,
+            notes_box_frame,
+            font=("Consolas", 8),
+            height=0,
             bg="#FFFFFF",
             fg=TEXT,
             relief="flat",
             bd=0,
-            insertbackground=PRIMARY,
-            selectbackground=PRIMARY,
-            selectforeground="white",
-            highlightthickness=0,
-            wrap="word",
             state="disabled"
         )
-        self.missing_orders_box.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # ===== SECTION: ACTION BUTTONS =====
-        actions_frame = tk.Frame(main, bg=BG)
-        actions_frame.pack(fill="x", pady=(0, 15))
+        # ===== ACTION BUTTONS =====
+        actions_frame = tk.Frame(main_frame, bg=BG)
+        actions_frame.pack(fill="x", pady=(0, 8))
 
-        btn1 = self.create_button(actions_frame, "✓ CREATE, COPY & ASSIGN", self.create_folders_with_video, PRIMARY, width=30, height=1, is_primary=True)
-        btn1.pack(side="left", padx=(0, 10))
+        self.create_button(actions_frame, "✓ CREATE & COPY", self.create_folders_with_video, PRIMARY, width=20).pack(side="left", padx=(0, 5))
+        self.create_button(actions_frame, "📂 OPEN", self.open_location, ACCENT, width=15).pack(side="left")
 
-        btn2 = self.create_button(actions_frame, "📂 OPEN LOCATION", self.open_location, ACCENT, width=25, height=1, is_primary=False)
-        btn2.pack(side="left")
+        # ===== PROGRESS & LOG =====
+        progress_frame = tk.Frame(main_frame, bg=CARD, relief="flat", bd=0)
+        progress_frame.pack(fill="both", expand=True)
+        progress_frame.config(highlightthickness=1, highlightbackground=LIGHT_BORDER)
 
-        # ===== SECTION: PROGRESS & STATUS =====
-        progress_frame = tk.Frame(main, bg=CARD, relief="flat", bd=0)
-        progress_frame.pack(fill="x", pady=(0, 15))
-        progress_frame.config(highlightthickness=1, highlightbackground=LIGHT_BORDER, highlightcolor=LIGHT_BORDER)
-
-        status_label = tk.Label(progress_frame, text="Status", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
-        status_label.pack(anchor="w", padx=20, pady=(15, 5))
+        tk.Label(progress_frame, text="Status & Log", bg=CARD, fg=PRIMARY, font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(8, 3))
 
         style = ttk.Style()
         style.theme_use('clam')
-        style.configure("Modern.Horizontal.TProgressbar", background=PRIMARY, troughcolor="#E0E0E0", bordercolor="white", lightcolor=PRIMARY, darkcolor=PRIMARY)
+        style.configure("Compact.Horizontal.TProgressbar", background=PRIMARY, troughcolor="#E0E0E0", bordercolor="white", lightcolor=PRIMARY, darkcolor=PRIMARY)
         
-        self.progress = ttk.Progressbar(progress_frame, style="Modern.Horizontal.TProgressbar", mode='determinate', length=300)
-        self.progress.pack(fill="x", padx=20, pady=5)
+        self.progress = ttk.Progressbar(progress_frame, style="Compact.Horizontal.TProgressbar", mode='determinate', length=300)
+        self.progress.pack(fill="x", padx=10, pady=(0, 3))
 
-        self.status = tk.Label(
-            progress_frame,
-            text="🟢 Ready",
-            bg=CARD,
-            fg="#4CAF50",
-            anchor="w",
-            font=("Segoe UI", 9, "bold")
-        )
-        self.status.pack(fill="x", padx=20, pady=(0, 15))
+        self.status = tk.Label(progress_frame, text="🟢 Ready", bg=CARD, fg="#4CAF50", anchor="w", font=("Segoe UI", 8, "bold"))
+        self.status.pack(fill="x", padx=10, pady=(0, 5))
 
-        # ===== SECTION: ACTIVITY LOG =====
-        log_frame = tk.Frame(main, bg=CARD, relief="flat", bd=0)
-        log_frame.pack(fill="both", expand=True)
-        log_frame.config(highlightthickness=1, highlightbackground=LIGHT_BORDER, highlightcolor=LIGHT_BORDER)
-
-        log_label = tk.Label(log_frame, text="Activity Log", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
-        log_label.pack(anchor="w", padx=20, pady=(15, 10))
+        log_frame = tk.Frame(progress_frame, bg="#FAFAFA", relief="solid", bd=1)
+        log_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         self.log = ScrolledText(
             log_frame,
-            height=6,
-            font=("Consolas", 9),
+            height=4,
+            font=("Consolas", 8),
             bg="#FAFAFA",
             fg=TEXT,
             relief="flat",
             bd=0,
             insertbackground=PRIMARY,
-            selectbackground=PRIMARY,
-            selectforeground="white",
             highlightthickness=0
         )
-        self.log.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+        self.log.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Animate initial state
+        self.root.after(500, lambda: self.animate_status_text("🟢 Ready", "#4CAF50"))
 
     def set_today(self):
-        """Set date to today in MM-DD-YY format"""
         today = datetime.now()
         formatted_date = today.strftime("%m-%d-%y")
         self.date_var.set(formatted_date)
-        self.write_log(f"📅 Date set to today: {formatted_date}")
-
-    def setup_placeholder(self, entry, placeholder):
-        """Setup placeholder text for entry fields"""
-        entry_placeholder = [placeholder]
-        
-        def on_focus_in(event):
-            if entry.get() == entry_placeholder[0]:
-                entry.delete(0, tk.END)
-                entry.config(fg=TEXT)
-        
-        def on_focus_out(event):
-            if entry.get() == "":
-                entry.insert(0, entry_placeholder[0])
-                entry.config(fg="#AAAAAA")
-        
-        entry.bind("<FocusIn>", on_focus_in)
-        entry.bind("<FocusOut>", on_focus_out)
-        entry.config(fg="#AAAAAA")
-
-    def validate_date(self, date_str):
-        """Validate date format MM-DD-YY"""
-        try:
-            datetime.strptime(date_str, "%m-%d-%y")
-            return True
-        except ValueError:
-            return False
+        self.write_log(f"📅 Date set to: {formatted_date}")
 
     def browse_destination(self):
         folder = filedialog.askdirectory()
         if folder:
             self.destination.set(folder)
-            self.write_log(f"📁 Destination selected: {folder}")
+            self.write_log(f"✓ Destination: {os.path.basename(folder)}")
 
     def browse_video_source(self):
         folder = filedialog.askdirectory()
         if folder:
             self.video_source.set(folder)
-            self.write_log(f"📹 Video source selected: {folder}")
+            self.write_log(f"✓ Video source: {os.path.basename(folder)}")
 
     def browse_images_source(self):
         folder = filedialog.askdirectory(title="Select images folder")
         if folder:
             self.images_source.set(folder)
-            self.write_log(f"🖼️ Images source selected: {folder}")
+            self.write_log(f"✓ Images source: {os.path.basename(folder)}")
 
     def write_log(self, text):
+        """Write to log with smooth animation"""
+        self.log.config(state="normal")
         self.log.insert("end", text + "\n")
         self.log.see("end")
+        self.log.config(state="normal")
+        self.root.update_idletasks()
 
     def write_note(self, text):
+        """Write note with smooth animation"""
         self.notes_box.config(state="normal")
         self.notes_box.insert("end", text + "\n")
         self.notes_box.see("end")
         self.notes_box.config(state="disabled")
+        self.root.update_idletasks()
 
     def write_missing_order(self, order, reason=None):
         self.missing_orders_box.config(state="normal")
@@ -596,6 +578,13 @@ class KBMCApp:
             self.missing_orders_box.insert("end", f"{order}\n")
         self.missing_orders_box.see("end")
         self.missing_orders_box.config(state="disabled")
+
+    def validate_date(self, date_str):
+        try:
+            datetime.strptime(date_str, "%m-%d-%y")
+            return True
+        except ValueError:
+            return False
 
     def find_video_file(self, video_id, video_source_folder):
         """Search for video file with given ID in video source folder"""
@@ -758,8 +747,8 @@ class KBMCApp:
                     os.makedirs(upon_returns, exist_ok=True)
                     self.write_log(f"  │  └─ UPON RETURNS/")
 
-                    self.progress["value"] = i
-                    self.status.config(text=f"🔄 Processing {i}/{len(orders)}...", fg="#F57C00")
+                    self.animate_progress_smooth(i, 100)
+                    self.animate_status_text(f"🔄 Processing {i}/{len(orders)}...", "#F57C00")
                     self.root.update_idletasks()
 
                 except Exception as e:
@@ -792,7 +781,8 @@ class KBMCApp:
                 pick_images_for_orders_dialog_compact(self.root, orders, images_source, date_folder,
                                                       order_status, on_order_completed, logger=self.write_log)
 
-            self.status.config(text="✅ Completed Successfully", fg="#2E7D32")
+            self.animate_status_text("✅ Completed Successfully", "#2E7D32")
+            self.animate_progress_smooth(len(orders), 200)
 
             if missing_orders_numbers:
                 seen = []
