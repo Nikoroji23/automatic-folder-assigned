@@ -1,3 +1,4 @@
+# kbmc_app.py
 import os
 import sys
 import tkinter as tk
@@ -7,6 +8,7 @@ import subprocess
 import platform
 from datetime import datetime
 from PIL import Image, ImageTk
+from image_picker_solution import copy_selected_images_for_order
 import shutil
 
 APP_NAME = "KBMC Order Folder Creator with Auto-Video"
@@ -23,6 +25,126 @@ ACCENT_HOVER = "#D63425"  # Darker accent for hover
 # Video extensions to search for
 VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mkv', '.mov', '.webm', '.flv']
 
+
+def pick_images_for_orders_dialog_compact(parent, orders, images_source, date_folder_base,
+                                          order_status, on_order_completed, logger=None):
+    """
+    Compact Assign Images dialog for small tabs.
+    - orders: list of order strings
+    - order_status: dict mapping order -> {'video_copied': bool, 'images_added': bool}
+    - on_order_completed(order): callback to notify main UI that an order is completed
+    """
+    dlg = tk.Toplevel(parent)
+    dlg.title("Assign Images")
+    dlg.geometry("380x420")
+    dlg.resizable(False, False)
+    dlg.transient(parent)
+    dlg.grab_set()
+
+    # center over parent
+    try:
+        dlg.update_idletasks()
+        pw = parent.winfo_width()
+        ph = parent.winfo_height()
+        px = parent.winfo_rootx()
+        py = parent.winfo_rooty()
+        w = dlg.winfo_width()
+        h = dlg.winfo_height()
+        if pw <= 1 and ph <= 1:
+            screen_w = dlg.winfo_screenwidth()
+            screen_h = dlg.winfo_screenheight()
+            x = (screen_w - w) // 2
+            y = (screen_h - h) // 2
+        else:
+            x = px + max(0, (pw - w) // 2)
+            y = py + max(0, (ph - h) // 2)
+        dlg.geometry(f"+{x}+{y}")
+    except Exception:
+        pass
+
+    tk.Label(dlg, text="Select order(s) then Pick Images", font=("Segoe UI", 9), padx=8, pady=6).pack(anchor="w")
+
+    frame = tk.Frame(dlg)
+    frame.pack(fill="both", expand=True, padx=8, pady=(0, 6))
+
+    tv = ttk.Treeview(frame, columns=("order", "status"), show="headings", selectmode="extended", height=12)
+    tv.heading("order", text="Order")
+    tv.heading("status", text="Status")
+    tv.column("order", anchor="w", width=220)
+    tv.column("status", anchor="center", width=80)
+    tv.pack(side="left", fill="both", expand=True)
+
+    for o in orders:
+        st = order_status.get(o, {})
+        done = st.get("video_copied", False) and st.get("images_added", False)
+        stat_text = "Done" if done else ("Video ✓" if st.get("video_copied", False) else "")
+        tv.insert("", "end", iid=o, values=(o, stat_text))
+        if done:
+            tv.item(o, tags=("done",))
+    tv.tag_configure("done", foreground="#999999")
+
+    sb = ttk.Scrollbar(frame, orient="vertical", command=tv.yview)
+    tv.configure(yscrollcommand=sb.set)
+    sb.pack(side="right", fill="y")
+
+    btn_frame = tk.Frame(dlg)
+    btn_frame.pack(fill="x", padx=8, pady=6)
+
+    def pick_for_selected():
+        sel = tv.selection()
+        if not sel:
+            messagebox.showinfo("No selection", "Select at least one order.")
+            return
+
+        for iid in sel:
+            order = iid
+            st = order_status.setdefault(order, {})
+            if st.get("video_copied", False) and st.get("images_added", False):
+                try:
+                    tv.delete(order)
+                except Exception:
+                    pass
+                if on_order_completed:
+                    on_order_completed(order)
+                continue
+
+            before_shipping = os.path.join(date_folder_base, order, "BEFORE SHIPPING")
+            moved, errs = copy_selected_images_for_order(order, images_source, before_shipping, parent)
+
+            if moved > 0:
+                st["images_added"] = True
+
+            if st.get("video_copied", False) and st.get("images_added", False):
+                try:
+                    tv.delete(order)
+                except Exception:
+                    pass
+                if on_order_completed:
+                    on_order_completed(order)
+
+            if logger:
+                logger(f"Images moved for {order}: {moved}")
+                for e in errs:
+                    logger(f"  Error: {e}")
+
+            if moved > 0 and not errs:
+                messagebox.showinfo("Done", f"{moved} image(s) moved for {order}.")
+            elif moved > 0 and errs:
+                messagebox.showwarning("Partial", f"{moved} image(s) moved for {order} with errors.")
+            elif errs:
+                messagebox.showwarning("Errors", f"Errors for {order}:\n" + "\n".join(errs))
+
+    def done():
+        dlg.destroy()
+
+    tk.Button(btn_frame, text="Pick Images for Selected", command=pick_for_selected,
+              bg="#1976D2", fg="white", font=("Segoe UI", 9), padx=6, pady=6).pack(side="left", padx=(0, 6))
+    tk.Button(btn_frame, text="Done", command=done,
+              bg="#999999", fg="white", font=("Segoe UI", 9), padx=6, pady=6).pack(side="right")
+
+    parent.wait_window(dlg)
+
+
 class KBMCApp:
     def __init__(self, root):
         self.root = root
@@ -32,6 +154,7 @@ class KBMCApp:
 
         self.destination = tk.StringVar()
         self.video_source = tk.StringVar()
+        self.images_source = tk.StringVar()
         self.date_var = tk.StringVar()
         self.buttons = []  # Store button references for hover effects
         
@@ -174,6 +297,23 @@ class KBMCApp:
 
         self.create_button(video_entry_frame, "Browse", self.browse_video_source, ACCENT, width=10, height=1, is_primary=False).pack(side="right", padx=(10, 0))
 
+        # Images Source Field
+        images_label = tk.Label(paths_frame, text="Images Folder (manual per order)", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
+        images_label.pack(anchor="w", padx=20, pady=(0, 5))
+
+        images_entry_frame = tk.Frame(paths_frame, bg="#F0F0F0", relief="solid", bd=2, highlightthickness=0)
+        images_entry_frame.pack(fill="x", padx=20, pady=(0, 15))
+
+        images_entry = tk.Entry(images_entry_frame, textvariable=self.images_source, font=("Segoe UI", 11), bg="#FFFFFF", fg=TEXT, relief="flat", bd=0, highlightthickness=0)
+        images_entry.pack(side="left", fill="x", expand=True, padx=10, pady=8)
+        images_entry.insert(0, "🖼️ Select folder with manual images for orders...")
+        self.setup_placeholder(images_entry, "🖼️ Select folder with manual images for orders...")
+
+        self.create_button(images_entry_frame, "Browse", self.browse_images_source, ACCENT, width=10, height=1, is_primary=False).pack(side="right", padx=(10, 0))
+
+        images_hint = tk.Label(paths_frame, text="Set this folder and then click CREATE, COPY & ASSIGN to manually choose images for each order.", bg=CARD, fg=SECONDARY_TEXT, font=("Segoe UI", 8), justify="left")
+        images_hint.pack(fill="x", padx=20, pady=(0, 10))
+
         # Date Field
         date_label = tk.Label(paths_frame, text="Date (MM-DD-YY)", bg=CARD, fg=PRIMARY, font=("Segoe UI", 10, "bold"))
         date_label.pack(anchor="w", padx=20, pady=(0, 5))
@@ -235,6 +375,7 @@ class KBMCApp:
 
         self.order_box.bind("<FocusIn>", on_order_focus)
 
+        # Manual images are now assigned during CREATE, COPY & ASSIGN
         middle_col = tk.Frame(inputs_frame, bg=CARD)
         middle_col.grid(row=0, column=1, sticky="nsew", padx=(10, 20), pady=20)
 
@@ -332,7 +473,7 @@ class KBMCApp:
         actions_frame = tk.Frame(main, bg=BG)
         actions_frame.pack(fill="x", pady=(0, 15))
 
-        btn1 = self.create_button(actions_frame, "✓ CREATE & COPY", self.create_folders_with_video, PRIMARY, width=25, height=1, is_primary=True)
+        btn1 = self.create_button(actions_frame, "✓ CREATE, COPY & ASSIGN", self.create_folders_with_video, PRIMARY, width=30, height=1, is_primary=True)
         btn1.pack(side="left", padx=(0, 10))
 
         btn2 = self.create_button(actions_frame, "📂 OPEN LOCATION", self.open_location, ACCENT, width=25, height=1, is_primary=False)
@@ -431,6 +572,12 @@ class KBMCApp:
             self.video_source.set(folder)
             self.write_log(f"📹 Video source selected: {folder}")
 
+    def browse_images_source(self):
+        folder = filedialog.askdirectory(title="Select images folder")
+        if folder:
+            self.images_source.set(folder)
+            self.write_log(f"🖼️ Images source selected: {folder}")
+
     def write_log(self, text):
         self.log.insert("end", text + "\n")
         self.log.see("end")
@@ -465,9 +612,9 @@ class KBMCApp:
     def create_folders_with_video(self):
         destination = self.destination.get().strip()
         video_source = self.video_source.get().strip()
+        images_source = self.images_source.get().strip()
         date_input = self.date_var.get().strip()
 
-        # ===== VALIDATION =====
         if not destination:
             messagebox.showerror("Error", "Select a destination folder.")
             return
@@ -476,12 +623,16 @@ class KBMCApp:
             messagebox.showerror("Error", "Destination folder does not exist.")
             return
 
-        if not video_source:
-            messagebox.showerror("Error", "Select a video source folder.")
+        if not video_source and not images_source:
+            messagebox.showerror("Error", "Select a video or images source folder.")
             return
 
-        if not os.path.exists(video_source):
+        if video_source and not os.path.exists(video_source):
             messagebox.showerror("Error", "Video source folder does not exist.")
+            return
+
+        if images_source and not os.path.exists(images_source):
+            messagebox.showerror("Error", "Images source folder does not exist.")
             return
 
         if not date_input:
@@ -492,14 +643,12 @@ class KBMCApp:
             messagebox.showerror("Error", f"Invalid date format.\nPlease use: MM-DD-YY\nExample: 06-03-26")
             return
 
-        # Get order numbers
         orders = [
             x.strip()
             for x in self.order_box.get("1.0", "end").splitlines()
             if x.strip() and not x.strip().startswith("📋")
         ]
 
-        # Get video IDs
         video_ids = [
             x.strip()
             for x in self.video_ids_box.get("1.0", "end").splitlines()
@@ -510,11 +659,16 @@ class KBMCApp:
             messagebox.showerror("Error", "Enter at least one order number.")
             return
 
+        # track per-order status
+        order_status = {o: {"video_copied": False, "images_added": False} for o in orders}
+
         has_no_video_ids = not bool(video_ids)
         extra_video_ids = []
         if len(video_ids) > len(orders):
             extra_video_ids = video_ids[len(orders):]
             video_ids = video_ids[:len(orders)]
+
+        remaining_order_video_pairs = list(zip(orders, video_ids))
 
         self.notes_box.config(state="normal")
         self.notes_box.delete("1.0", "end")
@@ -530,9 +684,10 @@ class KBMCApp:
         self.write_log(f"📅 Date: {date_input}")
         self.write_log(f"📍 Destination: {destination}")
         self.write_log(f"📹 Video source: {video_source}")
+        self.write_log(f"🖼️ Images source: {images_source}")
         self.write_log(f"📊 Orders: {len(orders)}\n")
 
-        if has_no_video_ids:
+        if has_no_video_ids and not images_source:
             self.write_log("⚠️  No video IDs provided. Orders will still be created without video attachments.")
             self.write_note("No video IDs were provided; all orders will be created without video attachments.")
 
@@ -550,20 +705,18 @@ class KBMCApp:
         videos_found = 0
         videos_missing = 0
         missing_orders_numbers = []
+        images_copied = 0
+        image_copy_errors = []
 
         try:
-            # ===== CREATE DATE FOLDER =====
             date_folder = os.path.join(destination, date_input)
             os.makedirs(date_folder, exist_ok=True)
             self.write_log(f"✓ Created date folder: {date_input}\n")
 
-            # ===== CREATE ORDER FOLDERS INSIDE DATE FOLDER =====
+            # First pass: create all order folders and BEFORE SHIPPING / UPON RETURNS
             for i, (order, video_id) in enumerate(zip(orders, video_ids_extended), start=1):
                 try:
-                    # Order folder path: destination/DATE/ORDER_NUMBER/
                     order_folder = os.path.join(date_folder, order)
-
-                    # BEFORE SHIPPING subfolder
                     before_shipping = os.path.join(order_folder, "BEFORE SHIPPING")
                     os.makedirs(before_shipping, exist_ok=True)
 
@@ -574,30 +727,33 @@ class KBMCApp:
                         video_file = self.find_video_file(video_id, video_source)
                         if video_file:
                             try:
-                                video_filename = os.path.basename(video_file)
-                                destination_path = os.path.join(before_shipping, video_filename)
-                                shutil.copy2(video_file, destination_path)
-                                self.write_log(f"  │  │  ✓ Copied: {video_filename}")
-                                videos_found += 1
+                                destination_path = os.path.join(before_shipping, os.path.basename(video_file))
+                                if os.path.exists(destination_path):
+                                    self.write_log(f"  │  │  ✓ Video already exists: {os.path.basename(video_file)}")
+                                else:
+                                    shutil.copy2(video_file, destination_path)
+                                    self.write_log(f"  │  │  ✓ Copied: {os.path.basename(video_file)}")
+                                    videos_found += 1
+                                # mark video copied for this order
+                                order_status[order]["video_copied"] = True
                             except Exception as e:
                                 self.write_log(f"  │  │  ✗ Failed to copy video: {str(e)}")
                                 self.write_note(f"Order {order}: failed to copy video ID {video_id}.")
-                                self.write_missing_order(order, f"failed to copy video ID {video_id}")
+                                self.write_missing_order(order, f"failed video copy")
                                 missing_orders_numbers.append(order)
                                 videos_missing += 1
                         else:
                             self.write_log(f"  │  │  ⚠️  Video ID '{video_id}' not found in source folder")
                             self.write_note(f"Order {order}: video ID '{video_id}' not found.")
-                            self.write_missing_order(order, f"video ID '{video_id}' missing in source")
+                            self.write_missing_order(order, f"missing video ID")
                             missing_orders_numbers.append(order)
                             videos_missing += 1
-                    else:
-                        self.write_log(f"  │  │  ⚠️  No Video ID provided for order {order}. Order created without video.")
+                    elif video_source:
+                        self.write_log(f"  │  │  ⚠️  No Video ID provided for order {order}.")
                         self.write_note(f"Order {order}: created without a matching Video ID.")
                         self.write_missing_order(order, "no Video ID provided")
                         missing_orders_numbers.append(order)
 
-                    # UPON RETURNS subfolder
                     upon_returns = os.path.join(order_folder, "UPON RETURNS")
                     os.makedirs(upon_returns, exist_ok=True)
                     self.write_log(f"  │  └─ UPON RETURNS/")
@@ -611,16 +767,39 @@ class KBMCApp:
                     self.write_log(error_msg)
                     errors.append(error_msg)
 
+            # callback when an order is completed (both video_copied and images_added)
+            def on_order_completed(order_done):
+                # remove the completed order from the Orders text box (exact match)
+                current = [x.strip() for x in self.order_box.get("1.0", "end").splitlines() if x.strip()]
+                new_order_list = [x for x in current if x != order_done]
+                self.order_box.delete("1.0", "end")
+                if new_order_list:
+                    self.order_box.insert("1.0", "\n".join(new_order_list))
+
+                # remove the completed order from the remaining pairs and rebuild the video IDs box
+                nonlocal remaining_order_video_pairs
+                remaining_order_video_pairs = [pair for pair in remaining_order_video_pairs if pair[0] != order_done]
+                new_video_ids = [pair[1] for pair in remaining_order_video_pairs]
+                self.video_ids_box.delete("1.0", "end")
+                if new_video_ids:
+                    self.video_ids_box.insert("1.0", "\n".join(new_video_ids))
+
+                self.write_log(f"Order {order_done} completed and removed from Orders box.")
+
+            # After creating all folders, if images_source is set, open a compact dialog
+            # that lets the user pick which order(s) to open the image picker for.
+            if images_source:
+                pick_images_for_orders_dialog_compact(self.root, orders, images_source, date_folder,
+                                                      order_status, on_order_completed, logger=self.write_log)
+
             self.status.config(text="✅ Completed Successfully", fg="#2E7D32")
-            # Summarize orders that did not receive copied videos (only order numbers)
+
             if missing_orders_numbers:
-                # Preserve first-seen order and remove duplicates
                 seen = []
                 for o in missing_orders_numbers:
                     if o not in seen:
                         seen.append(o)
                 self.write_note("Orders without copied videos: " + ", ".join(seen))
-                # Replace missing orders box contents with concise order numbers
                 self.missing_orders_box.config(state="normal")
                 self.missing_orders_box.delete("1.0", "end")
                 for o in seen:
@@ -628,82 +807,37 @@ class KBMCApp:
                 self.missing_orders_box.config(state="disabled")
 
             self.write_log(f"\n{'='*50}")
-            
-            if errors:
-                self.write_log(f"⚠️  Completed with {len(errors)} error(s)")
+
+            if errors or image_copy_errors:
+                self.write_log(f"⚠️  Completed with {len(errors) + len(image_copy_errors)} issue(s)")
                 messagebox.showwarning(
-                    "Partial Success",
-                    f"Created {len(orders) - len(errors)}/{len(orders)} folders.\n\n"
-                    f"Videos found: {videos_found}\n"
-                    f"Videos missing: {videos_missing}\n\n"
-                    f"Check the Activity Log for details."
+                    "Completed with issues",
+                    f"Completed with {len(errors) + len(image_copy_errors)} issue(s). Check the activity log."
                 )
             else:
-                self.write_log(f"✓ All {len(orders)} orders processed successfully!")
-                self.write_log(f"✓ Videos copied: {videos_found}")
-                if videos_missing > 0:
-                    self.write_log(f"⚠️  Videos missing: {videos_missing}")
-                if extra_video_ids:
-                    self.write_log(f"⚠️  Extra video IDs ignored: {len(extra_video_ids)}")
+                messagebox.showinfo("Completed", "All orders processed successfully.")
 
-                summary_message = (
-                    f"Created {len(orders)} order folders in:\n\n"
-                    f"{date_input}/\n\n"
-                    f"Videos copied: {videos_found}\n"
-                )
-                if extra_video_ids:
-                    summary_message += f"Extra video IDs ignored: {len(extra_video_ids)}\n"
-                summary_message += f"Location: {destination}"
-                messagebox.showinfo("Success", summary_message)
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to create folders: {str(e)}")
+            messagebox.showerror("Fatal error", str(e))
             self.write_log(f"✗ Fatal error: {str(e)}")
 
     def open_location(self):
-        """Cross-platform folder opening"""
-        path = self.destination.get().strip()
-        date_input = self.date_var.get().strip()
-        
-        if not path:
-            messagebox.showerror("Error", "Select a destination folder first.")
+        dest = self.destination.get().strip()
+        if not dest or not os.path.exists(dest):
+            messagebox.showerror("Error", "Destination folder not set or does not exist.")
             return
-        
-        if not date_input:
-            messagebox.showerror("Error", "Enter a date first.")
-            return
-            
-        # Open the date folder
-        full_path = os.path.join(path, date_input)
-        # Normalize and expand user vars to avoid path issues
-        full_path = os.path.normpath(os.path.expanduser(full_path))
-        
-        if not os.path.exists(full_path):
-            messagebox.showerror("Error", f"Folder does not exist: {full_path}")
-            return
-
         try:
-            # Windows
             if platform.system() == "Windows":
-                try:
-                    os.startfile(full_path)
-                except Exception:
-                    # Fallback to explorer if startfile fails
-                    subprocess.run(["explorer", full_path], check=False)
-            # macOS
+                os.startfile(dest)
             elif platform.system() == "Darwin":
-                subprocess.run(["open", full_path], check=False)
-            # Linux
+                subprocess.Popen(["open", dest])
             else:
-                subprocess.run(["xdg-open", full_path], check=False)
-                
-            self.write_log(f"📂 Opened: {full_path}")
-            
+                subprocess.Popen(["xdg-open", dest])
         except Exception as e:
-            messagebox.showerror("Error", f"Could not open folder: {str(e)}")
-            self.write_log(f"✗ Failed to open {full_path}: {str(e)}")
+            messagebox.showerror("Error", f"Failed to open folder: {e}")
 
 
 if __name__ == "__main__":
     root = tk.Tk()
-    KBMCApp(root)
+    app = KBMCApp(root)
     root.mainloop()
